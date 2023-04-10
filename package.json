@@ -1,0 +1,17 @@
+{
+  "name": "swiftly-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "parcel-resolver",
+    "core",
+    "example"
+  ],
+  "scripts": {
+    "dev": "tsc --build --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Sam Vervaeck",
+  "license": "MIT"
+}

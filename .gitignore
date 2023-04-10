@@ -1,0 +1,7 @@
+
+# managed by npm
+node_modules/
+
+# might get accidentally generated
+.parcel-cache/
+Makefile

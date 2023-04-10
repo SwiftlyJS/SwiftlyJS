@@ -1,0 +1,41 @@
+{
+  "name": "@swiftly/core",
+  "version": "0.0.1",
+  "description": "A framework for building interactive websites that work literally everywhere",
+  "main": "lib/index.js",
+  "source": "lib/index.ts",
+  "bin": {
+    "swiftly": "lib/bin/swiftly.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "framework",
+    "web",
+    "performance",
+    "react",
+    "productivity"
+  ],
+  "author": "Sam Vervaeck",
+  "license": "MIT",
+  "dependencies": {
+    "@parcel/config-default": "^2.8.3",
+    "@parcel/core": "^2.8.3",
+    "commander": "^10.0.0",
+    "fs-extra": "^11.1.1",
+    "minimist": "^1.2.8",
+    "parcel": "^2.8.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.10.0",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.1",
+    "@types/minimist": "^1.2.2",
+    "@types/node": "^18.15.11",
+    "@types/react": "^18.0.33",
+    "@types/react-dom": "^18.0.11"
+  }
+}

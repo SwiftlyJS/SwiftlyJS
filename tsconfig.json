@@ -1,0 +1,11 @@
+{
+  "references": [
+    {
+       "path": "core"
+    },
+    {
+       "path": "parcel-resolver"
+    }
+  ],
+  "files": []
+}
