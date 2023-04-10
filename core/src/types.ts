@@ -1,5 +1,5 @@
 
-export interface Route {
+export interface RouteSpec {
   render: () => React.ReactNode;
   path: string;
   createdAt?: Date;

@@ -5,10 +5,11 @@ import path from "path"
 import { ChildProcess, spawn } from "child_process";
 import { program } from "commander"
 import fs from "fs-extra"
+
 import { upsearch } from "../util";
+import { verbose, error, info } from "../logger";
 
 const thisPackagePath = path.resolve(__dirname, '..', '..');
-const serverEntryPoint = path.join(thisPackagePath, 'scripts/server.ts');
 
 program
   .name('swiftly')
@@ -23,18 +24,17 @@ program.command('build')
     const isDev = !(options.production ?? true) && (options.development ?? false);
     const bundlers = await createBundlers(isDev);
 
-    const results = await Promise.all(bundlers.map(bundler => bundler.run()));
+    const buildResults = await Promise.all(bundlers.map(bundler => bundler.run()));
 
     let bundleCount = 0;
     let buildTime = 0;
-    for (const result of results) {
+    for (const result of buildResults) {
       let { bundleGraph } = result;
       let bundles = bundleGraph.getBundles();
       bundleCount += bundles.length;
       buildTime += result.buildTime;
-      console.log(bundles[0].filePath);
     }
-    console.log(`✨ Built ${bundleCount} bundles in ${buildTime}ms!`);
+    info(`✨ Built ${bundleCount} bundles in ${buildTime}ms!`);
 
   });
 
@@ -45,6 +45,8 @@ program.command('serve')
     const bundlers = await createBundlers(true);
 
     let serverProcess: ChildProcess;
+
+    // process.on('exit', () => shutdown(serverProcess));
 
     const subscription = await Promise.all(bundlers.map(bundler => bundler.watch(async (err, event) => {
 
@@ -57,16 +59,16 @@ program.command('serve')
         for (const bundle of bundles) {
           if (path.basename(bundle.getMainEntry()!.filePath) === 'server.ts') {
             if (serverProcess) {
-              console.error(`Shutting down server process`);
+              verbose(`Shutting down server process`);
               await shutdown(serverProcess);
             }
-            console.error(`Starting up server process`);
+            verbose(`Starting up server process`);
             serverProcess = spawn(process.argv0, [ bundle.filePath ],  { stdio: 'inherit', });
           }
         }
-        console.log(`✨ Built ${bundles.length} bundles in ${event!.buildTime}ms!`);
+        info(`✨ Built ${bundles.length} bundles in ${event!.buildTime}ms!`);
       } else if (event!.type === 'buildFailure') {
-        console.log(event!.diagnostics);
+        error(event!.diagnostics.toString());
       }
 
     })));
@@ -78,7 +80,15 @@ program.parse();
 function shutdown(proc: ChildProcess): Promise<void> {
   return new Promise(accept => {
     proc.kill('SIGINT');
+    let timer: NodeJS.Timeout | null = setTimeout(() => {
+      proc.kill('SIGKILL');
+      timer = null;
+    }, 5000);
     proc.on('exit', () => {
+      console.error('Process exited');
+      if (timer) {
+        clearTimeout(timer);
+      }
       accept();
     });
   });
@@ -96,12 +106,12 @@ async function createBundlers(isDev: boolean) {
   await fs.mkdirp(path.join(packagePath, '.swiftly-data', 'build'));
 
   await fs.copyFile(
-    path.join(thisPackagePath, 'scripts', 'browser.ts'), 
+    path.join(thisPackagePath, 'scripts', 'browser.ts'),
     path.join(packagePath, '.swiftly-data', 'build', 'browser.ts'),
   );
 
   await fs.copyFile(
-    path.join(thisPackagePath, 'scripts', 'server.ts'), 
+    path.join(thisPackagePath, 'scripts', 'server.ts'),
     path.join(packagePath, '.swiftly-data', 'build', 'server.ts'),
   );
 
@@ -116,15 +126,14 @@ async function createBundlers(isDev: boolean) {
         distDir: 'dist/public',
       }
     },
-    // shouldPatchConsole: false,
     defaultConfig: '@parcel/config-default',
     config: path.join(thisPackagePath, 'scripts', 'parcelrc-runtime.json'),
-    additionalReporters: [
-      {
-        packageName: '@parcel/reporter-cli',
-        resolveFrom: __dirname,
-      }
-    ]
+    // additionalReporters: [
+    //   {
+    //     packageName: '@parcel/reporter-cli',
+    //     resolveFrom: __dirname,
+    //   }
+    // ]
   });
 
   const serverBundler = new Parcel({
@@ -140,12 +149,12 @@ async function createBundlers(isDev: boolean) {
     shouldDisableCache: true,
     defaultConfig: '@parcel/config-default',
     config: path.join(thisPackagePath, 'scripts', 'parcelrc-runtime.json'),
-    additionalReporters: [
-      {
-        packageName: '@parcel/reporter-cli',
-        resolveFrom: __dirname,
-      }
-    ]
+    // additionalReporters: [
+    //   {
+    //     packageName: '@parcel/reporter-cli',
+    //     resolveFrom: __dirname,
+    //   }
+    // ]
   });
 
   return [

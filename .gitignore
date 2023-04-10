@@ -2,6 +2,9 @@
 # managed by npm
 node_modules/
 
+# created by TypeScript
+tsconfig.tsbuildinfo
+
 # might get accidentally generated
 .parcel-cache/
 Makefile
