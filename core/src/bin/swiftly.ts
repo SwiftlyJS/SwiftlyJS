@@ -22,27 +22,34 @@ program.command('build')
   .action(async (options) => {
 
     const isDev = !(options.production ?? true) && (options.development ?? false);
-    const bundlers = await createBundlers(isDev);
+    const { outputDir, cacheDir } = await getDirectories(isDev);
+    const bundlers = await createBundlers({ isDev, outputDir, cacheDir });
 
     const buildResults = await Promise.all(bundlers.map(bundler => bundler.run()));
 
     let bundleCount = 0;
     let buildTime = 0;
     for (const result of buildResults) {
-      let { bundleGraph } = result;
-      let bundles = bundleGraph.getBundles();
+      let bundles = result.bundleGraph.getBundles();
       bundleCount += bundles.length;
       buildTime += result.buildTime;
     }
+    await writeFinalFiles(outputDir);
     info(`✨ Built ${bundleCount} bundles in ${buildTime}ms!`);
 
   });
 
 program.command('serve')
   .option('-p, --port', 'The port to listen on')
+  .option('--prod, --production', 'Ensure the build is ready for production')
+  .option('--dev, --development', 'Do not optimise the sources')
   .action(async (options) => {
 
-    const bundlers = await createBundlers(true);
+    const isDev = !(options.production ?? false) && (options.development ?? true);
+    const { projectDir, outputDir, cacheDir } = await getDirectories(isDev);
+    const port = options.port ?? 3000;
+
+    const bundlers = await createBundlers({ isDev, port, outputDir, cacheDir });
 
     let serverProcess: ChildProcess;
 
@@ -56,16 +63,19 @@ program.command('serve')
 
       if (event!.type === 'buildSuccess') {
         let bundles = event!.bundleGraph.getBundles();
-        for (const bundle of bundles) {
-          if (path.basename(bundle.getMainEntry()!.filePath) === 'server.ts') {
-            if (serverProcess) {
-              verbose(`Shutting down server process`);
-              await shutdown(serverProcess);
+        if (!isDev) {
+          for (const bundle of bundles) {
+            if (path.basename(bundle.getMainEntry()!.filePath) === 'server.ts') {
+              if (serverProcess) {
+                verbose(`Shutting down server process`);
+                await shutdown(serverProcess);
+              }
+              verbose(`Starting up server process`);
+              serverProcess = spawn(process.argv0, [ bundle.filePath ],  { stdio: 'inherit', });
             }
-            verbose(`Starting up server process`);
-            serverProcess = spawn(process.argv0, [ bundle.filePath ],  { stdio: 'inherit', });
           }
         }
+        await writeFinalFiles(outputDir);
         info(`✨ Built ${bundles.length} bundles in ${event!.buildTime}ms!`);
       } else if (event!.type === 'buildFailure') {
         error(event!.diagnostics.toString());
@@ -94,72 +104,107 @@ function shutdown(proc: ChildProcess): Promise<void> {
   });
 }
 
-async function createBundlers(isDev: boolean) {
+interface CreateBundlersOptions {
+  isDev: boolean;
+  port?: number;
+  cacheDir: string;
+  outputDir: string;
+}
 
-  const packageJsonPath = await upsearch(process.cwd(), 'package.json');
-  if (!packageJsonPath) {
-    console.error(`No package.json found in ${process.cwd()} or any of its parent directories.`);
-    process.exit(1);
-  }
-  const packagePath = path.dirname(packageJsonPath);
+async function createBundlers({ isDev, cacheDir, outputDir, port }: CreateBundlersOptions) {
 
-  await fs.mkdirp(path.join(packagePath, '.swiftly-data', 'build'));
+  const generatedDir = path.join(cacheDir, 'generated');
 
-  await fs.copyFile(
-    path.join(thisPackagePath, 'scripts', 'browser.ts'),
-    path.join(packagePath, '.swiftly-data', 'build', 'browser.ts'),
-  );
+  await fs.mkdirp(path.join(outputDir, 'public'));
+  await fs.mkdirp(cacheDir);
+  await fs.mkdirp(generatedDir);
 
-  await fs.copyFile(
-    path.join(thisPackagePath, 'scripts', 'server.ts'),
-    path.join(packagePath, '.swiftly-data', 'build', 'server.ts'),
-  );
+  await Promise.all([
+    fs.copyFile(
+      path.join(thisPackagePath, 'scripts', 'parcelrc-runtime.json'),
+      path.join(generatedDir, '.parcelrc'),
+    ),
+    fs.copyFile(
+      path.join(thisPackagePath, 'scripts', 'browser.ts'),
+      path.join(generatedDir, 'browser.ts'),
+    ),
+    fs.copyFile(
+      path.join(thisPackagePath, 'scripts', 'server.ts'),
+      path.join(generatedDir, 'server.ts'),
+    )
+  ]);
 
-  const browserBundler = new Parcel({
+  const browserConfig: any = {
     mode: isDev ? 'development' : 'production',
-    entries: path.join('.swiftly-data', 'build', 'browser.ts'),
+    entries: path.join(generatedDir, 'browser.ts'),
     shouldDisableCache: true,
     shouldPatchConsole: false,
     targets: {
       browser: {
         context: 'browser',
-        distDir: 'dist/public',
+        distDir: path.join(outputDir, 'public'),
       }
     },
     defaultConfig: '@parcel/config-default',
-    config: path.join(thisPackagePath, 'scripts', 'parcelrc-runtime.json'),
-    // additionalReporters: [
-    //   {
-    //     packageName: '@parcel/reporter-cli',
-    //     resolveFrom: __dirname,
-    //   }
-    // ]
-  });
+    config: path.join(generatedDir, '.parcelrc'),
+  }
 
-  const serverBundler = new Parcel({
-    mode: isDev ? 'development' : 'production',
-    entries: path.join('.swiftly-data', 'build', 'server.ts'),
-    targets: {
-      server: {
-        context: 'node',
-        distDir: 'dist',
-      }
-    },
-    shouldPatchConsole: false,
-    shouldDisableCache: true,
-    defaultConfig: '@parcel/config-default',
-    config: path.join(thisPackagePath, 'scripts', 'parcelrc-runtime.json'),
-    // additionalReporters: [
-    //   {
-    //     packageName: '@parcel/reporter-cli',
-    //     resolveFrom: __dirname,
-    //   }
-    // ]
-  });
+  if (isDev && port) {
+    browserConfig.serveOptions = {
+      port,
+    }
+    browserConfig.hmrOptions = {
+      port,
+    }
+  }
+
+  const browserBundler = new Parcel(browserConfig);
+
+//   const serverBundler = new Parcel({
+//     mode: isDev ? 'development' : 'production',
+//     entries: path.join(generatedDir, 'server.ts'),
+//     targets: {
+//       server: {
+//         context: 'node',
+//         distDir: path.join(outputDir, 'dist'),
+//       }
+//     },
+//     shouldPatchConsole: false,
+//     shouldDisableCache: true,
+//     defaultConfig: '@parcel/config-default',
+//     config: path.join(generatedDir, '.parcelrc'),
+//   });
 
   return [
     browserBundler,
-    serverBundler,
+    // serverBundler,
   ];
 
+}
+
+async function writeFinalFiles(outputDir: string): Promise<void> {
+  await fs.promises.writeFile(path.join(outputDir, 'public', 'index.html'), `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Loading ...</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/browser.js" async defer></script>
+  </body>
+</html>
+`);
+}
+
+async function getDirectories(isDev: boolean) {
+  const packageJsonPath = await upsearch(process.cwd(), 'package.json');
+  if (!packageJsonPath) {
+    console.error(`No package.json found in ${process.cwd()} or any of its parent directories.`);
+    process.exit(1);
+  }
+  const projectDir = path.dirname(packageJsonPath);
+  const cacheDir = path.join(projectDir, '.swiftly-data');
+  const outputDir = isDev ? path.join(cacheDir, 'dist', 'dev') : path.join(projectDir, 'dist');
+  return { projectDir, cacheDir, outputDir };
 }
