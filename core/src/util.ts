@@ -1,6 +1,8 @@
 import fs from "fs"
 import path from "path";
 
+export const thisPackageDir = path.resolve(__dirname, '..');
+
 export type Json = null | boolean | number | string | JsonArray | JsonObject;
 export type JsonObject = { [key: string]: Json };
 export type JsonArray = Array<Json>;
@@ -9,6 +11,12 @@ export function sleep(msec: number): Promise<void> {
   return new Promise(accept => {
     setTimeout(accept, msec);
   });
+}
+
+export function assert(test: boolean): asserts test {
+  if (!test) {
+    throw new Error(`Assertion failed. See the stack trace for more information.`);
+  }
 }
 
 export function serializeForm(form: HTMLFormElement): JsonObject {
@@ -68,3 +76,10 @@ export async function upsearch(startDir: string, fileName: string): Promise<stri
   }
 }
 
+export async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const arr = [];
+  for await (const element of iter) {
+    arr.push(element);
+  }
+  return arr;
+}

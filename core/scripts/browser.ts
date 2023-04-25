@@ -1,5 +1,5 @@
 import { startClient } from "@swiftly/core/lib/client"
-import routes from "swiftly!routes"
+import routes from "./routes"
 
 startClient(routes);
 

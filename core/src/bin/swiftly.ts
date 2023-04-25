@@ -1,210 +1,157 @@
 #!/usr/bin/env node
 
-import Parcel from "@parcel/core";
-import path from "path"
-import { ChildProcess, spawn } from "child_process";
+import path from "node:path"
+import CopyPlugin from 'copy-webpack-plugin';
+import webpackNodeExternals from 'webpack-node-externals';
+import webpack from "webpack"
+import WebpackDevServer from "webpack-dev-server"
 import { program } from "commander"
-import fs from "fs-extra"
 
-import { upsearch } from "../util";
-import { verbose, error, info } from "../logger";
-
-const thisPackagePath = path.resolve(__dirname, '..', '..');
-
-program
-  .name('swiftly')
-  .description('The offcial tool for developing apps with the Swiftly framework');
+import SwiftlyPlugin from "../plugin";
+import { thisPackageDir } from "../util";
 
 program.command('build')
-  .description('Build sources into an artifact that can be published')
-  .option('--prod, --production', 'Ensure the build is ready for production')
-  .option('--dev, --development', 'Do not optimise the sources')
-  .action(async (options) => {
-
-    const isDev = !(options.production ?? true) && (options.development ?? false);
-    const { outputDir, cacheDir } = await getDirectories(isDev);
-    const bundlers = await createBundlers({ isDev, outputDir, cacheDir });
-
-    const buildResults = await Promise.all(bundlers.map(bundler => bundler.run()));
-
-    let bundleCount = 0;
-    let buildTime = 0;
-    for (const result of buildResults) {
-      let bundles = result.bundleGraph.getBundles();
-      bundleCount += bundles.length;
-      buildTime += result.buildTime;
+  .action(async (opts) => {
+    const packageDir = '.'; // TODO
+    const distDir = path.join(packageDir, 'dist');
+    const compiler = createWebpack({ packageDir, distDir });
+    const stats = await new Promise<webpack.Stats | undefined>((accept, reject) => {
+      compiler.run((err, res) => {
+        if (err) reject(err);
+        else accept(res);
+      });
+    });
+    if (stats) {
+      console.log(stats.toString({ colors: true }));
     }
-    await writeFinalFiles(outputDir);
-    info(`✨ Built ${bundleCount} bundles in ${buildTime}ms!`);
-
   });
 
 program.command('serve')
-  .option('-p, --port', 'The port to listen on')
-  .option('--prod, --production', 'Ensure the build is ready for production')
-  .option('--dev, --development', 'Do not optimise the sources')
-  .action(async (options) => {
-
-    const isDev = !(options.production ?? false) && (options.development ?? true);
-    const { projectDir, outputDir, cacheDir } = await getDirectories(isDev);
-    const port = options.port ?? 3000;
-
-    const bundlers = await createBundlers({ isDev, port, outputDir, cacheDir });
-
-    let serverProcess: ChildProcess;
-
-    // process.on('exit', () => shutdown(serverProcess));
-
-    const subscription = await Promise.all(bundlers.map(bundler => bundler.watch(async (err, event) => {
-
-      if (err) {
-        throw err;
-      }
-
-      if (event!.type === 'buildSuccess') {
-        let bundles = event!.bundleGraph.getBundles();
-        if (!isDev) {
-          for (const bundle of bundles) {
-            if (path.basename(bundle.getMainEntry()!.filePath) === 'server.ts') {
-              if (serverProcess) {
-                verbose(`Shutting down server process`);
-                await shutdown(serverProcess);
-              }
-              verbose(`Starting up server process`);
-              serverProcess = spawn(process.argv0, [ bundle.filePath ],  { stdio: 'inherit', });
-            }
-          }
-        }
-        await writeFinalFiles(outputDir);
-        info(`✨ Built ${bundles.length} bundles in ${event!.buildTime}ms!`);
-      } else if (event!.type === 'buildFailure') {
-        error(event!.diagnostics.toString());
-      }
-
-    })));
-
+  .option('--prod', 'Build for production use')
+  .option('--open', 'Open browser when ready')
+  .action(async (opts) => {
+    const open = opts.open ?? false;
+    const isDebug = !(opts.prod ?? false);
+    const packageDir = '.'; // TODO
+    const distDir = path.join(packageDir, 'dist');
+    const compiler = createWebpack({ packageDir, distDir, isDebug });
+    const devServer = new WebpackDevServer({
+      open,
+      static: path.join(distDir, 'public'),
+      historyApiFallback: true,
+      // devMiddleware: {
+      //   writeToDisk: true
+      // }
+    }, compiler);
+    await devServer.start();
   });
 
 program.parse();
 
-function shutdown(proc: ChildProcess): Promise<void> {
-  return new Promise(accept => {
-    proc.kill('SIGINT');
-    let timer: NodeJS.Timeout | null = setTimeout(() => {
-      proc.kill('SIGKILL');
-      timer = null;
-    }, 5000);
-    proc.on('exit', () => {
-      console.error('Process exited');
-      if (timer) {
-        clearTimeout(timer);
-      }
-      accept();
-    });
-  });
+interface CreateWebpackOptions {
+  packageDir: string;
+  distDir: string;
+  isDebug?: boolean;
 }
 
-interface CreateBundlersOptions {
-  isDev: boolean;
-  port?: number;
-  cacheDir: string;
-  outputDir: string;
-}
-
-async function createBundlers({ isDev, cacheDir, outputDir, port }: CreateBundlersOptions) {
-
-  const generatedDir = path.join(cacheDir, 'generated');
-
-  await fs.mkdirp(path.join(outputDir, 'public'));
-  await fs.mkdirp(cacheDir);
-  await fs.mkdirp(generatedDir);
-
-  await Promise.all([
-    fs.copyFile(
-      path.join(thisPackagePath, 'scripts', 'parcelrc-runtime.json'),
-      path.join(generatedDir, '.parcelrc'),
-    ),
-    fs.copyFile(
-      path.join(thisPackagePath, 'scripts', 'browser.ts'),
-      path.join(generatedDir, 'browser.ts'),
-    ),
-    fs.copyFile(
-      path.join(thisPackagePath, 'scripts', 'server.ts'),
-      path.join(generatedDir, 'server.ts'),
-    )
-  ]);
-
-  const browserConfig: any = {
-    mode: isDev ? 'development' : 'production',
-    entries: path.join(generatedDir, 'browser.ts'),
-    shouldDisableCache: true,
-    shouldPatchConsole: false,
-    targets: {
-      browser: {
-        context: 'browser',
-        distDir: path.join(outputDir, 'public'),
-      }
+function createWebpack({ packageDir, distDir, isDebug = false }: CreateWebpackOptions): webpack.Compiler {
+  packageDir = path.resolve(packageDir);
+  distDir = path.resolve(distDir);
+  const serverJsPath = path.join(thisPackageDir, 'scripts', 'server.ts');
+  const browserJsPath = path.join(thisPackageDir, 'scripts', 'browser.ts');
+  const config: any = [
+    {
+      entry: path.join(serverJsPath),
+      target: 'node',
+      mode: isDebug ? 'development' : 'production',
+      context: packageDir,
+      output: {
+        path: distDir,
+        filename: 'server.bundle.js',
+      },
+      node: {
+        __dirname: false,
+      },
+      externalsPresets: { node: true }, // in order to ignore built-in modules like path, fs, etc.
+      externals: [webpackNodeExternals({
+        allowlist: ['jquery', 'webpack/hot/dev-server'],
+      })],
+      resolve: {
+        extensions: [ '.mjs', '.js', '.jsx', '.ts', '.tsx' ],
+      },
+      module: {
+        rules: [
+          {
+            test: /\.node$/,
+            loader: "node-loader",
+          },
+          {
+            test: /\.(png|jpg|jpeg|svg|gif|svg|eot|ttf|woff)$/,
+            type: 'asset/resource'
+          },
+          {
+            test: /\.(m?js|ts)x?$/,
+            exclude: /node_modules/,
+            use: {
+              loader: 'babel-loader',
+              options: {
+                presets: [
+                  ['@babel/preset-env', { targets: 'current node' }],
+                  ['@babel/preset-react', { importSource: '@emotion/react', runtime: 'automatic' }],
+                  '@babel/preset-typescript', 
+                ],
+              }
+            }
+          }
+        ]
+      },
+      plugins: [
+        new SwiftlyPlugin(packageDir, 'server'),
+      ]
     },
-    defaultConfig: '@parcel/config-default',
-    config: path.join(generatedDir, '.parcelrc'),
-  }
-
-  if (isDev && port) {
-    browserConfig.serveOptions = {
-      port,
+    {
+      entry: browserJsPath,
+      target: 'web',
+      context: packageDir,
+      output: {
+        path: path.join(distDir, 'public'),
+        filename: 'browser.bundle.js',
+      },
+      mode: isDebug ? 'development' : 'production',
+      resolve: {
+        extensions: [ '.mjs', '.js', '.jsx', '.ts', '.tsx' ],
+      },
+      module: {
+        rules: [
+          {
+            test: /\.(png|jpg|jpeg|svg|gif|svg|eot|ttf|woff)$/,
+            type: 'asset/resource'
+          },
+          {
+            test: /\.(m?js|ts)x?$/,
+            exclude: /node_modules/,
+            use: {
+              loader: 'babel-loader',
+              options: {
+                presets: [
+                  ['@babel/preset-env', { targets: 'defaults' }],
+                  ['@babel/preset-react', { importSource: '@emotion/react', runtime: 'automatic' }],
+                  '@babel/preset-typescript', 
+                ],
+              }
+            }
+          }
+        ]
+      },
+      plugins: [
+        new SwiftlyPlugin(packageDir, 'client'),
+        // new CopyPlugin({
+        //   patterns: [
+        //     { from: 'assets', to: path.join(distDir, 'public') },
+        //   ],
+        // }),
+      ],
     }
-    browserConfig.hmrOptions = {
-      port,
-    }
-  }
-
-  const browserBundler = new Parcel(browserConfig);
-
-//   const serverBundler = new Parcel({
-//     mode: isDev ? 'development' : 'production',
-//     entries: path.join(generatedDir, 'server.ts'),
-//     targets: {
-//       server: {
-//         context: 'node',
-//         distDir: path.join(outputDir, 'dist'),
-//       }
-//     },
-//     shouldPatchConsole: false,
-//     shouldDisableCache: true,
-//     defaultConfig: '@parcel/config-default',
-//     config: path.join(generatedDir, '.parcelrc'),
-//   });
-
-  return [
-    browserBundler,
-    // serverBundler,
-  ];
-
-}
-
-async function writeFinalFiles(outputDir: string): Promise<void> {
-  await fs.promises.writeFile(path.join(outputDir, 'public', 'index.html'), `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Loading ...</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script src="/browser.js" async defer></script>
-  </body>
-</html>
-`);
-}
-
-async function getDirectories(isDev: boolean) {
-  const packageJsonPath = await upsearch(process.cwd(), 'package.json');
-  if (!packageJsonPath) {
-    console.error(`No package.json found in ${process.cwd()} or any of its parent directories.`);
-    process.exit(1);
-  }
-  const projectDir = path.dirname(packageJsonPath);
-  const cacheDir = path.join(projectDir, '.swiftly-data');
-  const outputDir = isDev ? path.join(cacheDir, 'dist', 'dev') : path.join(projectDir, 'dist');
-  return { projectDir, cacheDir, outputDir };
+  ]
+  return webpack(config);
 }
