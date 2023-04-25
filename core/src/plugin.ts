@@ -5,7 +5,8 @@ import constants from 'node:constants';
 import fs from "fs-extra"
 import type { Compiler, Compilation } from 'webpack';
 
-import { assert, collect, thisPackageDir } from './util';
+import { assert, collect } from './util';
+import { thisPackageDir } from './utilNode';
 import { promisify } from 'node:util';
 
 interface FSStats {

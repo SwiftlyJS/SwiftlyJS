@@ -8,7 +8,6 @@ import { RouteSpec } from "./types";
 import { StaticRouter } from "react-router-dom/server"
 import ReactDOMServer from "react-dom/server";
 import mime from "mime"
-import { pathExists } from "fs-extra"
 
 export interface Request extends http.IncomingMessage {
   path: string;

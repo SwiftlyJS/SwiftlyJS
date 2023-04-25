@@ -1,6 +1,7 @@
 {
-  "name": "example",
+  "name": "swiftly-example",
   "version": "1.0.0",
+  "private": true,
   "description": "",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -9,7 +10,8 @@
   "author": "Sam Vervaeck",
   "license": "MIT",
   "dependencies": {
-    "@swiftly/core": "*",
-    "@swiftly/parcel-resolver": "*"
+    "@emotion/react": "^11.10.6",
+    "@emotion/styled": "^11.10.6",
+    "@swiftly/core": "*"
   }
 }
